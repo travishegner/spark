@@ -61,6 +61,8 @@ private[deploy] class ExecutorRunner(
   private var stdoutAppender: FileAppender = null
   private var stderrAppender: FileAppender = null
 
+  private[worker] var cgroup: Cgroup = null
+
   // Timeout to wait for when trying to terminate an executor.
   private val EXECUTOR_TERMINATE_TIMEOUT_MS = 10 * 1000
 
@@ -172,10 +174,22 @@ private[deploy] class ExecutorRunner(
       Files.write(header, stderr, StandardCharsets.UTF_8)
       stderrAppender = FileAppender(process.getErrorStream, stderr, conf)
 
+      //assign executor to the correct cgroup
+      if (cgroup != null) {
+        cgroup.addTask(process)
+      }
+
       // Wait for it to exit; executor may exit with code 0 (when driver instructs it to shutdown)
       // or with nonzero exit code
       val exitCode = process.waitFor()
       state = ExecutorState.EXITED
+
+      // destroy the cgroup after the executor is finished
+      if (cgroup != null) {
+        cgroup.destroy()
+      }
+      cgroup = null
+
       val message = "Command exited with code " + exitCode
       worker.send(ExecutorStateChanged(appId, execId, state, Some(message), Some(exitCode)))
     } catch {

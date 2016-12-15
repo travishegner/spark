@@ -103,8 +103,10 @@ private[spark] class StandaloneSchedulerBackend(
       } else {
         None
       }
+    val cpuShares = conf.getOption("spark.executor.shares").map(_.toInt)
     val appDesc = new ApplicationDescription(sc.appName, maxCores, sc.executorMemory, command,
-      appUIAddress, sc.eventLogDir, sc.eventLogCodec, coresPerExecutor, initialExecutorLimit)
+      appUIAddress, sc.eventLogDir, sc.eventLogCodec, coresPerExecutor, initialExecutorLimit,
+      System.getProperty("user.name", "<unknown>"), cpuShares)
     client = new StandaloneAppClient(sc.env.rpcEnv, masters, appDesc, this, conf)
     client.start()
     launcherBackend.setState(SparkAppHandle.State.SUBMITTED)

@@ -474,9 +474,17 @@ private[deploy] class Worker(
             conf,
             appLocalDirs, ExecutorState.RUNNING)
           executors(appId + "/" + execId) = manager
-          manager.start()
-          coresUsed += cores_
+
+          // check if we are running in cgroup mode; allocate worker resources accordingly
+          if (conf.getBoolean("spark.cgroups.enabled", false)) {
+            manager.cgroup = new Cgroup(appId, appDesc.cpuShares)
+          } else {
+            coresUsed += cores_
+          }
           memoryUsed += memory_
+
+          manager.start()
+
           sendToMaster(ExecutorStateChanged(appId, execId, manager.state, None, None))
         } catch {
           case e: Exception =>
@@ -670,7 +678,9 @@ private[deploy] class Worker(
           executors -= fullId
           finishedExecutors(fullId) = executor
           trimFinishedExecutorsIfNecessary()
-          coresUsed -= executor.cores
+          if (!conf.getBoolean("spark.cgroups.enabled", false)) {
+            coresUsed -= executor.cores
+          }
           memoryUsed -= executor.memory
         case None =>
           logInfo("Unknown Executor " + fullId + " finished with state " + state +

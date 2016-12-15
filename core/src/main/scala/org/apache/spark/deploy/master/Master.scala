@@ -646,8 +646,17 @@ private[deploy] class Master(
    * Schedule and launch executors on workers
    */
   private def startExecutorsOnWorkers(): Unit = {
-    // Right now this is a very simple FIFO scheduler. We keep trying to fit in the first app
-    // in the queue, then the second app, etc.
+    conf.getBoolean("spark.cgroups.enabled", false) match {
+      case false =>
+        scheduleFIFO()
+      case true =>
+        scheduleCgroups()
+    }
+  }
+
+  // Right now this is a very simple FIFO scheduler. We keep trying to fit in the first app
+  // in the queue, then the second app, etc.
+  private def scheduleFIFO(): Unit = {
     for (app <- waitingApps if app.coresLeft > 0) {
       val coresPerExecutor: Option[Int] = app.desc.coresPerExecutor
       // Filter out workers that don't have enough resources to launch an executor
@@ -661,6 +670,29 @@ private[deploy] class Master(
       for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
         allocateWorkerResourceToExecutors(
           app, assignedCores(pos), coresPerExecutor, usableWorkers(pos))
+      }
+    }
+  }
+
+  // rudimentary POC for running multiple apps simultaneously
+  // isolated by linux cgroups
+  private def scheduleCgroups(): Unit = {
+    for (app <- waitingApps) {
+      val usableWorkers = workers.toArray.filter(_.state == WorkerState.ALIVE)
+        .filter(worker => worker.memoryFree >= app.desc.memoryPerExecutorMB)
+        .sortBy(_.memoryFree).reverse
+
+      for (uw <- usableWorkers) {
+        var inUse = false
+        for (ex <- uw.executors) {
+          if (ex._2.application.id == app.id) {
+            inUse = true
+          }
+        }
+        if (!inUse) {
+          allocateWorkerResourceToExecutors(
+            app, uw.cores, None, uw)
+        }
       }
     }
   }
